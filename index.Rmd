@@ -1,0 +1,316 @@
+---
+title: "Practical Machine Learning Course Peer-Review Project - Week 4"
+author: "M.Kee"
+date: "`r format(Sys.time(), '%A, %B %d, %Y')`"
+output:
+  html_document:
+    keep_md: no
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    highlight: pygments
+    number_sections: yes
+    toc: yes
+    toc_depth: 1
+  word_document:
+    toc: yes
+    toc_depth: '1'
+---
+# __Project Overview__
+Health-fitness activity trackers are an inexpensive option that allow one to quantify self movement. People use these to take measurements about themselves regularly to improve their health, to find patterns in their behavior, or just because they are technology enthusiasts. Typically, these trackers are used to quantify how much of an activity is done, but it is rarely used to quantify how well an activity is done. Using accelerometer data from various health-fitness activity trackers, such as Jawbone Up, Nike FuelBand, & Fitbit, quantify how well 6 participants perform barbell lifts. The accelerometers for this experiment were positioned on the belt, forearm, arm, and dumbbell. The participants were asked to perform barbell lifts correctly & incorrectly in 5 different ways. 
+
+# __Project Objective(s)__
+The goal of the project was to predict the manner in which they did the exercise. This was the "classe" variable in the training set. Any of the other variables could be used to predict with. The following report was generated describing how the model was built, how cross validation was used, what the expected out of sample error should have been, and why the analyst made the choices they did. The best prediction model was also used to predict 20 different test cases.
+
+# __Data Description__
+According to Groupware@LES's Human Activity Recognition (HAR)^[Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.],...
+
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+
+1. exactly according to the specification (Class A)
+2. throwing the elbows to the front (Class B)
+3. lifting the dumbbell only halfway (Class C)
+4. lowering the dumbbell only halfway (Class D) 
+5. throwing the hips to the front (Class E)
+
+More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+## __Data Sources__
+* Training Data Set can be found [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)    
+* Test Data Set can be found [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)  
+
+## __Code for Data Download, Extraction, & Initial Exploration__
+The code presented below was responsible for resetting variables, loading R packages of interest, set user variables needed for dowanloading that data, and splitting the data into training, testing, & validation data sets. 
+
+```{r Data Download & Splitting, echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Clearing variables before program execution
+rm(list = ls())
+
+# Loading necessary packages
+library(tidyverse)
+library(readr)
+library(caret)
+library(lubridate)
+library(GGally)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(mlbench)
+library(parallel)
+library(doParallel)
+
+# Setting the seed number
+set.seed(7231184)
+
+# User-defined Variables that define desired working directory and date of download
+cwdir <- "C:/Users/mkee1/Documents/Coursera-JH-Data-Science/08_Practical_Machine_Learning/Week 4/Peer Review Projects/"
+
+filename <- "Raw Data"
+dateDownloaded <- date()
+
+# User-defined variables to assist with downloading the data files for analysis
+BuildfileURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+BuilddestDL <- "./Raw Data/Raw Build Data"
+
+ValidfileURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+ValiddestDL <- "./Raw Data/Raw Validation Data"
+
+# Setting working directory using user-defined function "setdesiredwd"
+source('~/setdesiredwd.R')
+setdesiredwd(cwdir)
+
+# Checking to see if file exist desired working directory. If not, then one is created 
+if (!file.exists(filename)) {dir.create(filename)}
+list.files()
+
+# Downloading training files of interest & extracting data from the zip file under desired working directory
+if (!file.exists(BuilddestDL)) 
+{
+        download.file(BuildfileURL, destfile = BuilddestDL)
+        print(dateDownloaded) # Displaying the date-time of download
+        print(base::file.size(BuilddestDL)) # Displaying the file size in bytes
+        list.files(filename) # Listing the files within the desired working directory
+}else {
+        print(base::file.info(BuilddestDL)$ctime) # Displaying the date-time of download
+        list.files(filename) # Listing the files within the desired working directory
+}
+
+# Downloading test files of interest & extracting data from the zip file under desired working directory
+if (!file.exists(ValiddestDL)) 
+{
+        download.file(ValidfileURL, destfile = ValiddestDL)
+        print(dateDownloaded) # Displaying the date-time of download
+        print(base::file.size(ValiddestDL)) # Displaying the file size in bytes
+        list.files(filename) # Listing the files within the desired working directory
+}else {
+        print(base::file.info(ValiddestDL)$ctime) # Displaying the date-time of download
+        list.files(filename) # Listing the files within the desired working directory
+}
+
+# Reading data into R using readr package & splitting data using cross validation approach
+validation <- read.csv("./Raw Data/Raw Validation Data")
+dim(validation)
+
+buildData <- read.csv("./Raw Data/Raw Build Data")
+inBuild <- createDataPartition(y=buildData$classe, p=0.7, list=FALSE)
+
+testing <- buildData[-inBuild, ]
+dim(testing)
+
+training <- buildData[inBuild, ]
+dim(training)
+```
+
+## __Data Exploration & Feature Selection__
+```{r Initial Data Exploration & Variable Conversion, echo=TRUE, eval=TRUE}
+# Initial Data Exploration
+str(training)
+
+# Data Conversion for Training
+training$user_name <- as.factor(training$user_name)
+training$cvtd_timestamp <- dmy_hm(training$cvtd_timestamp)
+training$new_window <- as.factor(training$new_window)
+training$num_window <- as.factor(training$num_window)
+training$classe <- as.factor(training$classe)
+
+# Checking for missing data in columns & identifying columns with missing data
+training %>%
+  select_if(function(x) any(is.na(x))) %>%
+  summarise(across(everything(), ~sum(is.na(.)))) -> SumcolumsWithNA
+names(SumcolumsWithNA)
+```
+
+In order to determine the path for analysis, the structure & format of the data was examined by using R's str function. At the analyst's discretion, the following variables were converted to factor variables: 
+
+* user_name
+* cvtd_timestamp
+* new_window
+* num_window
+* classe
+
+Along with variable conversion, the training data set was checked for missing data. Functions of the dplyr package was used to select all the columns with missing data and to sum up the amount of missing data for those columns identified. Majority of the columns that seemed to be missing data are pertaining to the columns measuring the orientation of the sensors (e.g. roll, pitch, & yaw) during the movement. Moreover, there were a couple of terms dealing with acceleration that also had data missing within those columns. At the discretion of the analyst, predictions for this analysis were done using the measurements of the accelerometers, gyroscopes, & the magnetometers since those columns were comprised of completed cases. 
+
+The script below performed the action of sub-setting the training dataset to only those columns containing measurements for the accelerometers, gyroscopes, & the magnetometers and summarizes the data aforementioned. Additionally, the script below also implemented a check for any co-variants having either zero or near-zero variability within the subset training set (e.g., training2).
+
+```{r Subsetting the Training Data & Data Exploration, echo=TRUE, eval=TRUE}
+# Sub-setting training set to only including predictors that are complete cases
+training2 <- training %>% select(contains(c("_x", "_y", "_z")) & !contains("yaw") | classe)
+dim(training2)
+summary(training2)
+
+# Checking to see if any of the co-variants have zero or near zero variability
+nzv <- nearZeroVar(training2, saveMetrics = TRUE)
+nzv
+```
+
+Variables within training2 had neither zero nor near-zero variability, therefore all were be included within the model training executed within the section below. 
+
+# __Training the Model__
+Three classification tree methods were, first, trained on the data. Subsequently, these individual models were used in a model stacking ensembling method. A 7-fold cross validation re-sampling method was used for every model trained. In the case the ensembling method, the model stack was done using a Random Forest method. The code for training these models is presented below.
+
+## __Classification & Regression Tree Using RPart Method__
+```{r CART, echo=TRUE, eval=TRUE}
+# Configuring parallel process
+cluster <- makeCluster(detectCores() - 1) #leave 1 core for OS
+registerDoParallel(cluster)
+
+# Setting up parallel processing parameter & 7-fold cross validation for models
+fitCtrl <- trainControl(method = "cv", number = 7, allowParallel = TRUE)
+
+# CART
+modFitTree <- train(classe ~., data = training2, method = "rpart", trControl = fitCtrl)
+fancyRpartPlot(modFitTree$finalModel)
+```
+
+## __Boosted Classification Tree Using the Gradient Boosting Algorithm (GBM) Method__
+```{r Boosted CART, echo=TRUE, eval=TRUE}
+# Boosted CART
+modFitBoost <- train(classe ~., data = training2, method = "gbm", verbose = FALSE, trControl = fitCtrl)
+modFitBoost
+```
+
+## __Random Forest Method__
+```{r Random Forest Method, echo=TRUE, eval=TRUE}
+# Random Forrest
+modFitRF <- train(classe ~., data = training2, method = "rf", trControl = fitCtrl)
+modFitRF
+```
+
+# __Testing Individual Models On The Testing Data Set__
+```{r Testing Individual Models On The Testing Data Set, echo=TRUE, eval=TRUE}
+# Data Conversion
+testing$user_name <- as.factor(testing$user_name)
+testing$cvtd_timestamp <- dmy_hm(testing$cvtd_timestamp)
+testing$new_window <- as.factor(testing$new_window)
+testing$num_window <- as.factor(testing$num_window)
+testing$classe <- as.factor(testing$classe)
+
+# Column check for NA values
+testing %>%
+  select_if(function(x) any(is.na(x))) %>%
+  summarise(across(everything(), ~sum(is.na(.)))) -> SumcolumsWithNA_Test
+names(SumcolumsWithNA_Test)
+
+# Sub-setting testing set to only including predictors that are complete cases
+testing2 <- testing %>% select(contains(c("_x", "_y", "_z")) & !contains("yaw") | classe)
+dim(testing2)
+str(testing2)
+summary(testing2)
+
+# Checking to see if any of the co-variants have zero or near zero variability
+nzv <- nearZeroVar(testing2, saveMetrics = TRUE)
+nzv
+
+# Performing predictions on sub-set of the testing data set using the models above & using confusion matrices to assess accuracy
+predTree <- predict(modFitTree, testing2)
+confusionMatrix(predTree, testing2$classe)
+
+predBoost <- predict(modFitBoost, testing2)
+confusionMatrix(predBoost, testing2$classe)
+
+predRF <- predict(modFitRF, testing2)
+confusionMatrix(predRF, testing2$classe)
+
+ONSAccuracyTree <- confusionMatrix(predTree, testing2$classe)$overall['Accuracy']
+ONSAccuracyBoost <- confusionMatrix(predBoost, testing2$classe)$overall['Accuracy']
+ONSAccuracyRF <- confusionMatrix(predRF, testing2$classe)$overall['Accuracy']
+```
+
+# __Ensembling Method: Model Stacking Approach & Testing__
+```{r Model Stacking Approach & Testin, echo=TRUE, eval=TRUE}
+# Creating data frame with different predictors obtained from the individual models above
+predDF <- data.frame(predTree, predBoost, predRF, classe=testing2$classe)
+
+# Training the model
+combModFit <- train(classe ~., data = predDF, method = "rf", trControl = fitCtrl)
+
+# Predicting new values on the data frame
+combPred <- predict(combModFit, predDF)
+confusionMatrix(combPred, predDF$classe)
+
+# Using confusion matrix to assess accuracy of the model stacking approach
+ONSAccuracyMS <- confusionMatrix(combPred, predDF$classe)$overall['Accuracy']
+```
+
+Prediction accuracy was chosen to be the prediction error measure of choice. Therefore, the accuracy for all four prediction methods were compared to determine the most accurate model for predicting the manner in which the participants did the exercise of interest. After evaluating each modeling method on the test data set, the estimated out-of-sample error, quantified via the accuracy of each of the modeling methods, were:    
+
+* Classification Tree Using RPart Method: `r ONSAccuracyTree`     
+* Boosted Classification Tree Using the Gradient Boosting Algorithm (GBM) Method: `r ONSAccuracyBoost`     
+* Random Forest Method: `r ONSAccuracyRF`     
+* Model Stacking Ensembling Method: `r ONSAccuracyMS`     
+
+Based off the above, one can observe that the best prediction result was provided by either the Random Forest Method or the Model Stacking Ensembling Method. Since both methods yielded the same out-of-sample accuracy, the Random Forest Model was used on the validation data set. Both the code & the results are presented below.
+
+# __Testing Individual Models On The Validation Data Set__
+```{r Testing Individual Models On The Validation Data Set, echo=TRUE, eval=TRUE}
+# Data Conversion
+validation$user_name <- as.factor(validation$user_name)
+validation$cvtd_timestamp <- dmy_hm(validation$cvtd_timestamp)
+validation$new_window <- as.factor(validation$new_window)
+validation$num_window <- as.factor(validation$num_window)
+
+# Column check for NA values
+validation %>%
+  select_if(function(x) any(is.na(x))) %>%
+  summarise(across(everything(), ~sum(is.na(.)))) -> SumcolumsWithNA_Valid
+names(SumcolumsWithNA_Valid)
+
+# Sub-setting validation set to only including predictors that are complete cases
+validation2 <- validation %>% select(contains(c("_x", "_y", "_z")) & !contains("yaw"))
+dim(validation2)
+str(validation2)
+summary(validation2)
+
+# Checking to see if any of the co-variants have zero or near zero variability
+nzv <- nearZeroVar(validation2, saveMetrics = TRUE)
+nzv
+
+# Performing predictions on sub-set of the validation data set using the models above & using confusion matrix to assess accuracy
+predValidRF <- predict(modFitRF, validation2)
+dt <- data.frame(validation$user_name, classe=predValidRF)
+dt
+
+# Explicitly shut down the cluster
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+# __Conclusion__
+In summary, the purpose of this task was to use accelerometer data from various health-fitness activity trackers to quantify how well 6 participants perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions. The accelerometers for this experiment were positioned on the belt, forearm, arm, and dumbbell. The "classe" variable within the data set is the term that is used to indicate the manner in which the exercise was perform by the 6 participants. 
+
+Four classification models were trained & evaluated for prediction performance. The respective, estimated out-of-sample accuracy results are summarized below. 
+
+* Classification Tree Using RPart Method: `r ONSAccuracyTree`     
+* Boosted Classification Tree Using the Gradient Boosting Algorithm (GBM) Method: `r ONSAccuracyBoost`     
+* Random Forest Method: `r ONSAccuracyRF`     
+* Model Stacking Ensembling Method: `r ONSAccuracyMS`     
+
+Both the Random Forest Method and the Model Stacking Ensembling Method yielded the same out-of-sample accuracy. So therefore, the Random Forest Model was used on the validation data set and yielded the following results: 
+
+```{r Validation Results, echo=TRUE, eval=TRUE}
+dt
+```
